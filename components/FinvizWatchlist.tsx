@@ -102,9 +102,6 @@ export default function FinvizWatchlist() {
   const [usePrefix, setUsePrefix] = useState(false);
   const [prefix, setPrefix] = useState("NASDAQ");
   const [activePreset, setActivePreset] = useState<string>(PRESETS[0].id);
-  const [fetching, setFetching] = useState(false);
-  const [fetchMsg, setFetchMsg] = useState<string | null>(null);
-  const [fetchErr, setFetchErr] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -139,30 +136,6 @@ export default function FinvizWatchlist() {
     setFlash(msg);
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlash(null), 1600);
-  }
-
-  async function handleFetch() {
-    setFetching(true);
-    setFetchErr(null);
-    setFetchMsg(null);
-    try {
-      const res = await fetch(`/api/finviz?preset=${preset.id}`);
-      const data = await res.json();
-      if (!data.ok) {
-        setFetchErr(data.error || "Fetch failed. Try the paste box below.");
-        return;
-      }
-      const tickers: string[] = data.tickers || [];
-      setRaw(tickers.join(", "));
-      let msg = `Pulled ${data.count} tickers from the ${preset.label} screen.`;
-      if (data.truncated) msg += " Capped at the first 600 or so.";
-      if (data.partial && data.warning) msg += ` (${data.warning})`;
-      setFetchMsg(msg);
-    } catch {
-      setFetchErr("Couldn't reach the fetcher. Use the paste box below.");
-    } finally {
-      setFetching(false);
-    }
   }
 
   function handleCopy() {
@@ -225,11 +198,7 @@ export default function FinvizWatchlist() {
               <button
                 key={p.id}
                 type="button"
-                onClick={() => {
-                  setActivePreset(p.id);
-                  setFetchMsg(null);
-                  setFetchErr(null);
-                }}
+                onClick={() => setActivePreset(p.id)}
                 className="rounded-full px-4 py-2 text-sm font-semibold border transition"
                 style={{
                   background: active
@@ -251,39 +220,20 @@ export default function FinvizWatchlist() {
           {preset.blurb}
         </p>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={handleFetch}
-            disabled={fetching}
-            className="btn-aurora rounded-xl px-5 py-2.5 text-sm disabled:opacity-50"
-          >
-            {fetching ? "Fetching…" : `Fetch ${preset.label} from Finviz`}
-          </button>
+        <div className="mt-4">
           <a
             href={finvizUrl(preset.filter)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm font-semibold underline-offset-2 hover:underline"
-            style={{ color: "var(--accent-cyan)" }}
+            className="btn-aurora inline-block rounded-xl px-5 py-2.5 text-sm"
           >
-            Open the screen in Finviz ↗
+            Open the {preset.label} screen in Finviz ↗
           </a>
         </div>
-
-        {fetchMsg && (
-          <p className="mt-3 text-sm" style={{ color: "var(--accent-emerald)" }}>
-            {fetchMsg}
-          </p>
-        )}
-        {fetchErr && (
-          <p className="mt-3 text-sm" style={{ color: "var(--accent-rose)" }}>
-            {fetchErr}
-          </p>
-        )}
         <p className="mt-3 text-xs leading-relaxed" style={{ color: "var(--text-3)" }}>
-          Auto-fetch reads the free Finviz screen directly. If it's ever rate-limited
-          or down, copy the tickers off the screen and paste them below instead.
+          Opens the screen in Finviz in a new tab. Switch the view to{" "}
+          <strong>Tickers</strong> for a plain comma-separated list, copy it, and paste
+          it below. Works on the free plan, which shows 20 at a time, so copy each page.
         </p>
       </div>
 
