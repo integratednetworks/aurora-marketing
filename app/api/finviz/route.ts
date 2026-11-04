@@ -28,7 +28,27 @@ const PAGE_TIMEOUT_MS = 8000;
 // identifier here.
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/125.0 Safari/537.36";
+  "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+
+// A fuller set of browser-like headers. Finviz turns away requests that look
+// too much like a bare bot, so we mimic a real Chrome navigation.
+const BROWSER_HEADERS: Record<string, string> = {
+  "User-Agent": UA,
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-GB,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache",
+  "Upgrade-Insecure-Requests": "1",
+  "sec-ch-ua": '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "same-origin",
+  "Sec-Fetch-User": "?1",
+};
 
 const TICKER_RE = /quote\.ashx\?t=([A-Za-z0-9.\-]+)/g;
 
@@ -36,17 +56,48 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function fetchPage(filter: string, offset: number): Promise<string> {
+// Visit the Finviz homepage first to pick up any cookies it sets, then send
+// them with the screener requests. A lot of basic bot checks are satisfied
+// just by arriving with a valid session cookie and a Referer.
+async function primeCookies(): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://finviz.com/", {
+      headers: { ...BROWSER_HEADERS, "Sec-Fetch-Site": "none" },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    // undici (Node 18+) exposes getSetCookie(); fall back to the folded header.
+    const h = res.headers as Headers & { getSetCookie?: () => string[] };
+    const raw = h.getSetCookie?.() ?? (res.headers.get("set-cookie") ? [res.headers.get("set-cookie") as string] : []);
+    return raw
+      .map((c) => c.split(";")[0])
+      .filter(Boolean)
+      .join("; ");
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchPage(
+  filter: string,
+  offset: number,
+  cookie: string,
+): Promise<string> {
   const url = `https://finviz.com/screener.ashx?v=111&f=${filter}&o=-marketcap&r=${offset}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
   try {
+    const headers: Record<string, string> = {
+      ...BROWSER_HEADERS,
+      Referer: "https://finviz.com/screener.ashx",
+    };
+    if (cookie) headers.Cookie = cookie;
     const res = await fetch(url, {
-      headers: {
-        "User-Agent": UA,
-        Accept: "text/html,application/xhtml+xml",
-        "Accept-Language": "en-GB,en;q=0.9",
-      },
+      headers,
       signal: controller.signal,
       cache: "no-store",
     });
@@ -108,10 +159,13 @@ export async function GET(request: Request): Promise<Response> {
   let pages = 0;
   let truncated = false;
 
+  // Warm up a session cookie once, then reuse it across all pages.
+  const cookie = await primeCookies();
+
   try {
     for (let i = 0; i < MAX_PAGES; i++) {
       const offset = i * PER_PAGE + 1; // Finviz rows are 1-indexed: 1, 21, 41…
-      const html = await fetchPage(filter, offset);
+      const html = await fetchPage(filter, offset, cookie);
       const pageTickers = parseTickers(html);
       pages++;
 
